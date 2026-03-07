@@ -16,418 +16,540 @@ Agent-Trust is an embedded middleware, cryptographic identity manager, reputatio
 
 ## 🛠️ Extensive Architectural Flows
 
-Below is a detailed engineering documentation mapping out the exact state machines, lifecycles, and verification flows inside the `Agent-Trust` infrastructure. 
+Below is a detailed engineering documentation mapping out the exact state machines, lifecycles, and verification flows inside the `Agent-Trust` infrastructure. All diagrams strictly adhere to GitHub-compatible Mermaid definitions.
 
 ### 1. High-Level Macro Architecture
 ```mermaid
 graph TD
-    A["Agent Swarm Environment"] --> B["Agent-Trust Middleware"]
-    B --> C["Core Identity Engine"]
-    B --> D["Trust Graph Manager"]
-    B --> E["Consent Audit Layer"]
-    B --> F["East-West Monitor"]
-    B --> G["Reputation Ledger"]
-    C --> H["Cryptography Store (Keys)"]
-    D --> I["Directed Acyclic Graph (DAG) state"]
-    E --> J["Scoped JWT Issuer"]
-    F --> K["Anomaly Heuristics"]
-    G --> L["Merkle Tree Verifier"]
+    classDef sys fill:#1e1e2e,stroke:#89b4fa,stroke-width:2px,color:#cdd6f4;
+    classDef core fill:#313244,stroke:#f38ba8,stroke-width:2px,color:#cdd6f4;
+    classDef mod fill:#45475a,stroke:#a6e3a1,stroke-width:2px,color:#cdd6f4;
+    
+    A["🌐 Agent Swarm Environment"]:::sys --> B{"🛡️ Agent-Trust Middleware"}
+    
+    subgraph Core_Engine
+        B --> C["Core Identity Engine"]:::core
+        B --> D["Trust Graph Manager"]:::core
+        B --> E["Consent Audit Layer"]:::core
+    end
+    
+    subgraph Analytics_Layer
+        B --> F["East-West Monitor"]:::mod
+        B --> G["Reputation Ledger"]:::mod
+    end
+    
+    C -- "Cryptographic Binding" --> H[("Cryptography Store")]:::sys
+    D -- "DAG Resolution" --> I[("Directed Acyclic Graph")]:::sys
+    E -- "JWT Issuance" --> J[("Scoped Token Matrix")]:::sys
+    F -- "Heuristics" --> K["Anomaly Detection Engine"]:::sys
+    G -- "Validation" --> L["Merkle Tree Verifier"]:::sys
 ```
 
 ### 2. Core Security Gateway Interception
 ```mermaid
 sequenceDiagram
+    autonumber
     participant M as Source Agent
     participant GW as Agent-Trust Intercept
+    participant Ledger as Reputation Ledger
+    participant Graph as Trust Graph
     participant T as Target Agent
-    M->>GW: Request Task Execution + Token
-    GW->>GW: 1. Verify Signature & Token Integrity
-    GW->>GW: 2. Consult Reputation Ledger for Target/Source
-    GW->>GW: 3. Cross-Check Trust Edges
-    GW->>GW: 4. Ensure Token Scope contains Task Type
-    GW-->>M: 403 Forbidden (If any check fails)
-    GW->>T: Forward Verified Request
-    T-->>GW: Task Result
-    GW->>GW: Update Performance/Latency/Success Metrics
-    GW-->>M: Parsed Result + Receipt
+    
+    M->>GW: Request Execution (JWT + Signed Payload)
+    activate GW
+    GW->>GW: 1. Verify Cryptographic Signature
+    GW->>Ledger: 2. Query Reputation Score
+    Ledger-->>GW: Score > Threshold
+    GW->>Graph: 3. Verify Directed Trust Edge
+    Graph-->>GW: Trust Edge Exists (Level: VERIFIED)
+    GW->>GW: 4. Check JWT Scopes for Task
+    alt Validation Failed
+        GW-->>M: 403 Forbidden (Auth/Trust Error)
+    else Validation Passed
+        GW->>T: Forward Sanitized Request
+        activate T
+        T-->>GW: Immutable Task Result
+        deactivate T
+        GW->>Ledger: Update Telemetry (Latency, Success)
+        GW-->>M: Parsed Result + Interaction Receipt
+    end
+    deactivate GW
 ```
 
 ### 3. Identity Derivation Sequence
 Identity isn't assigned; it's computed deterministically.
 ```mermaid
 graph LR
-    P["System Prompt"] --> X["SHA256 Hash"]
-    T["Tool Constraints"] --> Y["SHA256 Hash"]
-    X --> Z["Combined Payload"]
+    classDef in fill:#1e1e2e,stroke:#f38ba8,stroke-width:2px,color:#cdd6f4;
+    classDef hash fill:#313244,stroke:#89b4fa,stroke-width:2px,color:#cdd6f4;
+    classDef out fill:#45475a,stroke:#a6e3a1,stroke-width:2px,color:#cdd6f4;
+
+    P["System Prompt Spec"]:::in -->|SHA-256| X["Hash Segment A"]:::hash
+    T["Tool Constraints List"]:::in -->|SHA-256| Y["Hash Segment B"]:::hash
+    X --> Z{"Concat & Digest"}:::hash
     Y --> Z
-    Z --> I["Master Fingerprint (16 byte ID)"]
-    I --> K["Ed25519 Keypair Generation"]
-    K --> O["Verified Identity Node"]
+    Z --> I["Master Fingerprint (16-bytes)"]:::out
+    I -- "Seed" --> K["Ed25519 Keypair Gen"]:::out
+    K --> O(("Verified Identity Node")):::out
 ```
 
 ### 4. Continuous Key Rotation
 ```mermaid
 stateDiagram-v2
-    [*] --> IssueInitialTransportKey
-    IssueInitialTransportKey --> KeyActive: Timestamp T0
-    KeyActive --> KeyExpiring: Timer hits 80% TTL
-    KeyExpiring --> GenerateNewTransportKey: Background Worker
-    GenerateNewTransportKey --> GracePeriod: Allow old and new
-    GracePeriod --> KeyActive: Expire old key (Timestamp T1)
-    KeyActive --> IdentityRevoked: Compromise Detected
-    IdentityRevoked --> [*]
+    [*] --> Issue_Transport_Key: Node Bootstrap
+    Issue_Transport_Key --> Key_Active: T[0] Timestamp Recorded
+    Key_Active --> Key_Expiring: 80% TTL Threshold Exceeded
+    
+    state Key_Expiring {
+        [*] --> Background_Worker
+        Background_Worker --> Generate_New_Key
+        Generate_New_Key --> Distribute_To_Peers
+        Distribute_To_Peers --> [*]
+    }
+    
+    Key_Expiring --> Grace_Period: Keys Overlapped
+    Grace_Period --> Key_Active: Old Key Dropped
+    Key_Active --> Identity_Revoked: Compromise / Spill Detected
+    Identity_Revoked --> [*]
 ```
 
 ### 5. Delegated Consent Chains (GDPR / SOC2)
 ```mermaid
 graph TD
-    User["Human Authorized Request"] --> A1["Root Planner Agent"]
-    A1 -->|"Delegates READ"| A2["Research Agent"]
-    A2 -->|"Delegates PARSE"| A3["Parser Agent"]
-    A3 -->|"Delegates LOG"| A4["Audit Agent"]
-    subgraph ConsentChain [Consent Audit Chain]
-        A1
-        A2
-        A3
-        A4
+    classDef human fill:#f38ba8,stroke:#11111b,color:#11111b;
+    classDef agent fill:#89b4fa,stroke:#11111b,color:#11111b;
+    classDef security fill:#a6e3a1,stroke:#11111b,color:#11111b;
+
+    User(("Human Initiator")):::human -- "Authorized Intent" --> A1["Root Planner"]:::agent
+    
+    subgraph Delegation_Chain
+        A1 -- "Delegates READ" --> A2["Research Agent"]:::agent
+        A2 -- "Delegates PARSE" --> A3["Parser Agent"]:::agent
+        A3 -- "Delegates LOG" --> A4["Audit Agent"]:::agent
     end
-    C["Consent Engine"] -.->|"Verifies Max Depth"| A2
-    C -.->|"Verifies Token Expiry"| A3
-    C -.->|"Verifies Task Matches Scope"| A4
+    
+    C{"Consent Engine"}:::security -. "Verifies Depth Limit" .-> A2
+    C -. "Verifies Token TTL" .-> A3
+    C -. "Validates Task Scope" .-> A4
 ```
 
 ### 6. Cascade Trust Isolation
 When circular trusts are detected, automatic islanding occurs to protect the broader swarm.
 ```mermaid
 graph TD
-    X["Node X"] --> Y["Node Y"]
-    Y --> Z["Node Z"]
-    Z -.->|"Illicit Trust Request"| X
-    Alert["Security Scan Detects Cycle!"] --> B["Isolate X, Y, Z"]
-    B --> C["Generate Alert: cascade_detected"]
-    C --> D["Cut Edges"]
+    classDef vuln fill:#fab387,stroke:#11111b;
+    classDef safe fill:#a6e3a1,stroke:#11111b;
+    classDef defense fill:#f38ba8,stroke:#11111b;
+
+    X["Node X"]:::vuln -->|Trusts| Y["Node Y"]:::vuln
+    Y -->|Trusts| Z["Node Z"]:::vuln
+    Z -. "Illicit Cyclic Trust" .-> X
+    
+    Alert{"Security Scanner"}:::defense -- "Detects Cycle O V+E" --> B["Isolate Sub-Graph"]:::safe
+    B --> C["Emit Alert: CASCADE_DETECTED"]:::safe
+    C -- "Quarantine" --> D["Sever Cyclic Edges"]:::safe
 ```
 
-### 7. Reputation Degradation (Penalty Curve)
+### 7. Reputation Degradation Graph
 ```mermaid
 graph TD
-    Rep1["100% - Trusted"] --> Rep2["90% - First Violation"]
-    Rep2 --> Rep3["60% - Multiple Violations"]
-    Rep3 --> Rep4["15% - Consistent Failures"]
-    Rep4 --> Rep5["0% - Untrusted/Isolating"]
-    Violations["Policy Violations"] --> Rep2
-    Violations --> Rep3
-    Violations --> Rep4
-    Violations --> Rep5
+    classDef tier1 fill:#a6e3a1,color:#11111b;
+    classDef tier2 fill:#f9e2af,color:#11111b;
+    classDef tier3 fill:#fab387,color:#11111b;
+    classDef tier4 fill:#f38ba8,color:#11111b;
+
+    R1["100% : Fully Trusted Node"]:::tier1
+    R2["90% : Provisional (1 Violation)"]:::tier2
+    R3["50% : Degraded (Multiple Violations)"]:::tier3
+    R4["0% : Blacklisted & Isolated"]:::tier4
+
+    V["Policy Violation Event"]
+    
+    V -- "Decay Penalty" --> R1
+    R1 --> R2
+    V -- "Decay Penalty" --> R2
+    R2 --> R3
+    V -- "Critical Penalty" --> R3
+    R3 --> R4
 ```
 
-### 8. Merkle Tree Reputation Validation
+### 8. Merkle Tree Structure
 ```mermaid
 graph BT
-    L1["Reputation Leaf 1"] --> H1["Hash 12"]
-    L2["Reputation Leaf 2"] --> H1
-    L3["Reputation Leaf 3"] --> H2["Hash 34"]
-    L4["Reputation Leaf 4"] --> H2
-    H1 --> Root["Merkle Root"]
-    H2 --> Root
-    Root --> V["Dashboard Verification Tick"]
+    classDef leaf fill:#89b4fa,color:#11111b;
+    classDef hash fill:#cba6f7,color:#11111b;
+    classDef root fill:#f38ba8,color:#11111b;
+
+    L1["Tx Record A"]:::leaf --> H1["Hash A"]:::hash
+    L2["Tx Record B"]:::leaf --> H1
+    L3["Tx Record C"]:::leaf --> H2["Hash C"]:::hash
+    L4["Tx Record D"]:::leaf --> H2
+    H1 --> H12["Hash A+B"]:::hash
+    H2 --> H34["Hash C+D"]:::hash
+    H12 --> Root{"Merkle Root"}:::root
+    H34 --> Root
+    Root -- "O log N Proof" --> V["Verifiable Dashboard State"]:::leaf
 ```
 
 ### 9. Token Data Structure
 ```mermaid
 classDiagram
+    direction RL
     class ScopedJWT {
-        +String jti (Token ID)
-        +String iss (Issuer Agent)
-        +String aud (Target Agent)
-        +Long iat (Issued At)
-        +Long exp (Expires At)
-        +Array scopes (Permissions)
-        +String task_type (Constraints)
-        +String chain_id (Consent Tracking)
+        +String jti : Unique Token ID
+        +String iss : Issuer Agent Fingerprint
+        +String aud : Target Agent Fingerprint
+        +Long iat : Issued At Timestamp
+        +Long exp : Expiration Time
+        +Array scopes : Bound Permissions
+        +String task_type : Invocation Constraint
+        +String chain_id : Ancestry Tracking ID
+        +validate() bool
     }
+    class Cryptography {
+        +verify_signature(payload, pubkey)
+    }
+    ScopedJWT --> Cryptography : Depends on
 ```
 
-### 10. Dashboard API Polling Mechanism
+### 10. API Polling Subsystem
 ```mermaid
 sequenceDiagram
-    participant UI as React Frontend
-    participant F as FastAPI (Port 8730)
-    participant M as Middleware Instance
-    loop Every 5 Seconds
-    UI->>F: GET /api/dashboard
-    F->>M: get_dashboard_data()
-    M->>M: Aggregate Graph Nodes, Reputation, Alerts
-    M-->>F: Unified JSON Blob
-    F-->>UI: Complete State Replace
+    participant UI as React UX 
+    participant F as FastAPI Sockets
+    participant M as Middleware Core
+    participant DB as SQLite / Memory
+    
+    loop Every 5000ms
+        UI->>F: GET /api/dashboard
+        F->>M: get_dashboard_summary()
+        M->>DB: Fetch (Graph, Tokens, Rep)
+        DB-->>M: Raw Schemas
+        M->>M: Compile Unified State Vector
+        M-->>F: JSON Payload
+        F-->>UI: 200 OK + Blob
+        UI->>UI: Hydrate React Context
+        UI->>UI: Re-run Force-Graph Physics
     end
-    UI->>UI: Render ForceGraph2d Physics
 ```
 
-### 11. Cross-Organization Boundary Mapping
+### 11. Geographic / Organizational Boundaries
 ```mermaid
 graph LR
-    subgraph OrgA [Organization A OrchestraCorp]
-        A1["Planner"]
-        A2["Executor"]
+    classDef org fill:#313244,stroke:#89b4fa,stroke-width:2px;
+    classDef ag fill:#cba6f7,stroke:#11111b,color:#11111b;
+
+    subgraph Org_A
+        A1("Planner Root"):::ag
+        A2("Code Executor"):::ag
     end
-    subgraph OrgB [Organization B DataVault]
-        B1["Retriever"]
-        B2["Analyzer"]
+
+    subgraph Org_B
+        B1("Data Retriever"):::ag
+        B2("Log Analyzer"):::ag
     end
-    A1 -->|"Cross-Org Trust (VERIFIED)"| B1
-    A2 -->|"Cross-Org Trust (BASIC)"| B2
-    B1 -.->|"Refused Trust"| A2
+
+    A1 -- "VERIFIED Edge" --> B1
+    A2 -- "BASIC Edge" --> B2
+    B1 -. "Trust Denied / Out of Scope" .-> A2
 ```
 
-### 12. East-West Traffic Anomaly Detection
+### 12. East-West Heuristics
 ```mermaid
 graph TD
-    Traffic["Raw Event"] --> Ext["Feature Extraction"]
-    Ext --> P["Payload Size"]
-    Ext --> L["Latency Profile"]
-    Ext --> V["Volume / Min"]
-    P --> ML["Heuristic Matcher"]
+    classDef data fill:#89b4fa,color:#11111b;
+    classDef ml fill:#f38ba8,color:#11111b;
+    classDef sys fill:#a6e3a1,color:#11111b;
+
+    Traffic[/"Raw Network Payload"/]:::data --> Ext{"Feature Extractor"}:::ml
+    Ext --> P["Size (Bytes)"]:::sys
+    Ext --> L["Latency (ms)"]:::sys
+    Ext --> V["Velocity (req/m)"]:::sys
+    
+    P --> ML{"Heuristic Model"}:::ml
     L --> ML
     V --> ML
-    ML -->|"Score > Limit"| Alert["Trigger 'volume_spike'"]
-    ML -->|"Score < Limit"| Pass["Store in Event Log"]
+    
+    ML -- "Score > Limit" --> Alert["Dispatch VOLUME_SPIKE"]:::data
+    ML -- "Score < Limit" --> Pass["Commit to Interaction DB"]:::sys
 ```
 
-### 13. Security State Lifecycle
+### 13. State Machine: Threat Triage
 ```mermaid
 stateDiagram-v2
-    Secure --> Scanning: Scheduled Job
-    Scanning --> Safe: No Issues
-    Scanning --> Violations: Issues Found
-    Violations --> AutoIsolate: Critical Scope Escalation
-    Violations --> AlertDashboard: Minor Anomalies
-    AutoIsolate --> HumanReview
-    HumanReview --> Restored
-    HumanReview --> PermanentlyRevoked
+    direction LR
+    [*] --> Secure
+    Secure --> Scanning: Cron Trigger
+    Scanning --> Secure: Clean
+    Scanning --> Violations_Detected: Anomalies Found
+    
+    Violations_Detected --> Auto_Isolate: High Severity
+    Violations_Detected --> Generate_Alert: Low Severity
+    
+    Auto_Isolate --> Human_Audit: Operations Desk
+    Human_Audit --> State_Restored: False Positive
+    State_Restored --> Secure
+    Human_Audit --> Hard_Revocation: True Positive Threat
+    Hard_Revocation --> [*]
 ```
 
-### 14. Registration Flow
+### 14. Registration Lifecycle
 ```mermaid
 sequenceDiagram
-    participant User
-    participant MW as Middleware
-    participant ID as Identity Manager
-    participant Graph as Trust Graph
-    User->>MW: register_agent()
-    MW->>ID: Process Prompt & Tools
-    ID->>ID: Compute Fingerprint
-    ID->>ID: Derive Identity & Transport Keys
-    ID-->>MW: AgentIdentity Obj
-    MW->>Graph: Initialize new isolated node
-    MW-->>User: Returned Identity
+    participant O as Operations Engineer
+    participant MW as Middleware API
+    participant Engine as Identity Engine
+    participant G as DAG Manager
+    
+    O->>MW: register_agent(Prompt, Tools)
+    MW->>Engine: Generate Cryptography
+    Engine->>Engine: Hash Prompt & Tools => Fingerprint
+    Engine->>Engine: Derive Ed25519 Root Keys
+    Engine-->>MW: AgentIdentity Object
+    MW->>G: Provision Isolated Node
+    MW-->>O: 201 Created (Identity)
 ```
 
-### 15. Trust Escalation Escalation Attack Vector
-(Demonstrating what Agent-Trust prevents)
+### 15. The 'Confused Deputy' Attack Vector
 ```mermaid
 graph TD
-    Good["Trusted Node"] --> Weak["Vulnerable Node"]
-    Weak --> Bad["Malicious Overlay Node"]
-    Bad -.->|"Forge Delegation Token"| Weak
-    Weak -.->|"Attempt Admin Execution on behalf of Good"| Target["Critical DB Node"]
-    Target -->|"Denied by Agent-Trust (Scope Mismatch & Chain ID failure)"| Weak
+    classDef good fill:#a6e3a1,color:#11111b;
+    classDef weak fill:#f9e2af,color:#11111b;
+    classDef bad fill:#f38ba8,color:#11111b;
+    classDef db fill:#89b4fa,color:#11111b;
+
+    Good["Trusted Authority"]:::good --> Weak["Compromised Node"]:::weak
+    Bad["Malicious Infiltrator"]:::bad -. "Injects Payload" .-> Weak
+    Weak -. "Elevated Execution Request" .-> Target[("Vault / Database")]:::db
+    
+    Target -- "Denied by Agent-Trust Target-Scope Mismatch" --> Weak
 ```
 
-### 16. Operational Metrics Calculation
+### 16. Formulas & Metrics Engine
 ```mermaid
 graph TD
-    Events["Interaction History DB"]
-    Events --> Succ["Success Rate = Sum(Succ)/Total"]
-    Events --> Lat["Avg Latency = Sum(Lat)/Total"]
-    Events --> Viol["Violation Rate = Sum(Viol)/(Total * Decay)"]
-    Succ --> Rep["Overall Reputation Formula"]
+    classDef log fill:#313244,color:#cdd6f4;
+    classDef calc fill:#89b4fa,color:#11111b;
+    classDef out fill:#f38ba8,color:#11111b;
+
+    Events[("Interaction Logs")]:::log --> Succ["Rate Success = S / S+F"]:::calc
+    Events --> Lat["Rate Latency = Avg ms"]:::calc
+    Events --> Viol["Rate Violations = V / Total Decay"]:::calc
+    
+    Succ --> Rep{"Reputation Matrix Algo"}:::out
     Lat --> Rep
     Viol --> Rep
 ```
 
-### 17. Sandbox Intercept Architecture
+### 17. Environment Sandbox Overlay
 ```mermaid
 graph LR
-    OS["Operating System"]
-    Docker["Docker Environment"]
-    App["LLM Framework"]
-    AT["Agent-Trust Overlay"]
-    OS --> Docker
-    Docker --> AT
-    AT --> App
-    App -->|"Attempts outbound A2A call"| AT
-    AT -->|"Authorizes / Blocks"| Docker
-```
-
-### 18. Centralized vs Decentralized Deployments
-```mermaid
-graph TD
-    SubGraph1["Decentralized (Sidecar Mode)"]
-    S1["Agent A (Sidecar)"] --> S2["Agent B (Sidecar)"]
-    S2 --> S1
+    OS["Host OS"] --> Docker["Container Runtime"]
+    Docker --> AT{"Agent-Trust Interceptor"}
+    AT --> App["LLM Application Framework"]
     
-    SubGraph2["Centralized (Gateway Mode)"]
-    GA["Agent A"] --> GW{"Agent-Trust Gateway"}
-    GB["Agent B"] --> GW
-    GW --> Target["Destinations"]
+    App -- "Malicious Subprocess Call" --> AT
+    AT -- "Block (Zero-Trust Native)" --> Docker
 ```
 
-### 19. Key Compromise Handling Flow
+### 18. Centralized Hub vs Decentralized Mesh
+```mermaid
+graph TD
+    subgraph Mesh_Topology
+        S1(("Agent 1")) <--> S2(("Agent 2"))
+        S2 <--> S3(("Agent 3"))
+        S3 <--> S1
+    end
+    
+    subgraph Gateway_Topology
+        GA(("Agent Alpha")) --> GW{"Core Gateway"}
+        GB(("Agent Beta")) --> GW
+        GW --> Target["External Sandbox"]
+    end
+```
+
+### 19. Complete Paradigm Shift
 ```mermaid
 sequenceDiagram
-    participant Sys as System
-    participant ID as Identity Manager
+    participant S as Detection Interface
+    participant ID as Identity Engine
     participant R as Reputation Ledger
-    Sys->>ID: Report Compromise (Signature Leak)
-    ID->>ID: Invalidate current KeyPairs
-    ID->>ID: Add to Key Revocation List (KRL)
-    ID->>R: Set Trust Level to UNTRUSTED
-    ID->>Sys: Generate fresh keys
+    
+    S->>ID: Report Key Splillage
+    activate ID
+    ID->>ID: Immediate Key Invalidation
+    ID->>ID: Publish to KRL (Key Revocation List)
+    ID->>R: Downgrade to UNTRUSTED
+    R-->>ID: Ledger Updated
+    ID-->>S: Purge Complete
+    deactivate ID
 ```
 
-### 20. Token Consumption Timeline (Single-Use vs TTL)
+### 20. Token Consumption Timeline
 ```mermaid
 sequenceDiagram
-    participant T as Timeline
-    participant JWT as ScopedJWT
-    Note over T,JWT: Time-To-Live (TTL) Mechanism
-    T->>JWT: Issue Token (Time = 0s)
-    Note over JWT: Token is Valid (0s - 300s)
-    T->>JWT: 300s Elapsed
-    Note over JWT: Token Expired! (Strict TTL)
-    Note over T,JWT: Single-Use Guarantee
-    T->>JWT: Token Used for Execution
-    Note over JWT: Token Valid
-    T->>JWT: Execution Finished
-    Note over JWT: Token Permanently Invalidated
+    participant T as Timeline Clock
+    participant JWT as Auth Token
+    
+    T->>JWT: Time = 0s (Token Issued)
+    Note over JWT: State VALID (TTL Active)
+    T->>JWT: Time = 100s
+    Note over JWT: State VALID
+    T->>JWT: Time = 300s
+    Note over JWT: State EXPIRED (Strict TTL Cutoff)
 ```
 
-### 21. Live Traffic Dashboard Socket Flow
+### 21. Live Traffic Stream
 ```mermaid
 graph LR
-    EW["East-West Monitor"] --> Q["In-Memory Buffer Ring"]
-    Q -.->|"Polling Sync"| API["/api/dashboard/traffic"]
-    API --> UI["React UI trafficTimeline State"]
-    UI --> Chart["Recharts AreaChart"]
+    classDef event fill:#89b4fa,color:#11111b;
+    classDef mem fill:#f38ba8,color:#11111b;
+    classDef ui fill:#a6e3a1,color:#11111b;
+
+    EW["East-West Intercept"]:::event --> Q[("In-Memory Buffer")]:::mem
+    Q -. "Polling Endpoint Pull" .-> API["GET /dashboard/traffic"]:::event
+    API --> React["React State Mutator"]:::ui
+    React --> Chart["D3.js / Recharts Render"]:::ui
 ```
 
-### 22. React Component Hierarchy
+### 22. React 19 Client Component Tree
 ```mermaid
 graph TD
-    App["App.jsx (Root)"]
-    App --> Hook["useTrustData (Fetcher)"]
-    App --> Sidebar["Nav Sidebar"]
-    App --> Main["Main Content Area"]
-    Main --> Over["OverviewPage"]
-    Main --> TG["TrustGraphPage"]
-    Main --> Rep["ReputationPage"]
-    Main --> Ctl["ControlDeskPage"]
-    TG --> Force["react-force-graph-2d"]
+    classDef hook fill:#cba6f7,color:#11111b;
+    classDef comp fill:#89b4fa,color:#11111b;
+
+    App["App.jsx Root"]:::comp --> Hook{"useTrustData()"}:::hook
+    App --> Main["Content Router"]:::comp
+    
+    Main --> Over["Metrics Overview"]:::comp
+    Main --> TG["Trust Graph Engine"]:::comp
+    Main --> Rep["Reputation Ledger UI"]:::comp
+    Main --> Ctl["Control Operations Desk"]:::comp
+    
+    TG --> Force["Force-Graph-2D Canvas"]:::hook
 ```
 
-### 23. Node Priority Weighting (For Graph Physics)
+### 23. Physics Engine Algorithms
 ```mermaid
 graph TD
-    Node["Node"]
-    Rep["Reputation Score"] --> Val["val = Math.max(2, score * 10)"]
-    Risk["Risk Level (Low/Med/High)"] --> Color["color = Green/Orange/Red"]
-    Val --> Physics["Radius/Charge in Graph"]
-    Color --> Physics
+    classDef raw fill:#313244,color:#cdd6f4;
+    classDef math fill:#89b4fa,color:#11111b;
+    classDef phys fill:#f38ba8,color:#11111b;
+
+    Node["Agent Node Data"]:::raw --> Val{"Calculation max2, score * 10"}:::math
+    Node --> Risk{"Risk String Matcher"}:::math
+    
+    Val --> Rad["Physics Radius"]:::phys
+    Risk --> Col["Node Paint Color"]:::phys
+    Rad --> Engine["React Force Render Engine"]:::phys
+    Col --> Engine
 ```
 
-### 24. Compliance Flag Generation
+### 24. Zero-Trust Access Flags
 ```mermaid
 graph LR
-    Req["Request"] --> Check1{"Depth < Limit?"}
-    Check1 -->|Yes| Check2{"Token Includes Data Scope?"}
-    Check2 -->|No| Alert1["GDPR Warning"]
-    Check2 -->|Yes| OK["Compliance PASS"]
-    Check1 -->|No| Alert2["SOC2 Warning (Chain too long)"]
+    Req[("API Request")] --> Check1{"Chain Depth < Limit?"}
+    Check1 -- "YES" --> Check2{"Token Has Scope?"}
+    Check2 -- "NO" --> Alert1["Flag: Scope Mismatch"]
+    Check2 -- "YES" --> OK["Result: Granted"]
+    Check1 -- "NO" --> Alert2["Flag: Depth Limit Exceeded"]
 ```
 
-### 25. Storage Schema Overlook (Conceptual)
+### 25. Storage Schema ORM
 ```mermaid
 erDiagram
     AGENT {
-        string id PK
-        string fingerprint
-        string pub_key
+        string UUID PK
+        string Fingerprint UK
+        string Ed25519_Pub_Key
+        float Reputation_Score
     }
     TRUST_EDGE {
-        string source FK
-        string target FK
-        int level
+        string Source_ID FK
+        string Target_ID FK
+        int Trust_Enum_Level
+        timestamp Created_At
     }
     INTERACTION {
-        string id PK
-        string source FK
-        string target FK
-        boolean success
+        string Request_ID PK
+        string Source_ID FK
+        string Target_ID FK
+        boolean Was_Successful
+        float Latency_Ms
     }
     AGENT ||--o{ TRUST_EDGE : maintains
-    AGENT ||--o{ INTERACTION : performs
+    AGENT ||--o{ INTERACTION : executes
 ```
 
-### 26. Control Desk Interactive Lifecycle
+### 26. Admin Control Execution Cycle
 ```mermaid
 sequenceDiagram
-    participant Oper as Operator (UI)
-    participant CD as ControlDesk Component
-    participant F as FastAPI Backend
-    participant MW as Middleware
-    Oper->>CD: Fills 'Establish Trust' Form
-    Oper->>CD: Clicks Output
-    CD->>F: POST /api/trust/establish
-    F->>MW: middleware.establish_trust()
-    MW->>MW: Update DAG edges
-    F-->>CD: 200 OK
-    CD->>CD: setSuccess(msg) -> refetch()
-    CD-->>Oper: Visual Feedback & UI Updates
+    participant User as System Admin
+    participant UI as React Dashboard
+    participant API as FastAPI Backend
+    participant DAG as Graph Engine
+    
+    User->>UI: Submit Trust Form (Source -> Target)
+    activate UI
+    UI->>API: HTTP POST /api/trust/establish
+    activate API
+    API->>DAG: append_edge(s, t, level)
+    DAG-->>API: Graph Recomputed
+    API-->>UI: 200 OK + Updated State
+    deactivate API
+    UI->>UI: setSuccess(msg) & Re-fetch
+    UI-->>User: Visual Physics Update
+    deactivate UI
 ```
 
-### 27. The Circular Trust Bug Resolution Logic
+### 27. Cycle Interruption Logic
 ```mermaid
 graph TD
-    NodeA --> NodeB
-    NodeB --> NodeC
+    classDef node fill:#89b4fa,color:#11111b;
+    classDef alg fill:#f38ba8,color:#11111b;
+    
+    NodeA(("Node A")):::node --> NodeB(("Node B")):::node
+    NodeB --> NodeC(("Node C")):::node
     NodeC --> NodeA
-    Algo["networkx.simple_cycles(G)"] --> Scan
-    Scan -->|"Cycle Found"| Warn["Log Alert"]
-    Warn --> Break["Temporarily Suspend Edge C->A"]
+    
+    Algo{"networkx.simple_cycles"}:::alg --> Scan["Scan Complete DAG"]:::alg
+    Scan -- "Identified Triad Loop" --> Break["Suspend Edge C -> A"]:::alg
 ```
 
-### 28. Reputation Math
-`score = (reliability * 0.4) + (performance * 0.3) + (compliance * 0.3)`
+### 28. Reputation Bayesian Math
 ```mermaid
 graph BT
-    Rel["Successes / Total"] --> Score["Overall Score"]
-    Perf["1 - Min(1, Latency_Avg / 1000)"] --> Score
-    Comp["1 - (Violations / Interacts)"] --> Score
+    classDef sub fill:#313244,color:#cdd6f4;
+    classDef out fill:#a6e3a1,color:#11111b;
+
+    Rel["W1: Success / Total"]:::sub --> Score{"Aggregated Reputation Score"}:::out
+    Perf["W2: 1 - min1, ms / 1000"]:::sub --> Score
+    Comp["W3: 1 - Violations / Total"]:::sub --> Score
 ```
 
-### 29. Alert Message Dispatching
+### 29. Alert Message Dispatch Pipeline
 ```mermaid
 graph LR
-    Sys["Sub-Module (Monitor, DAG, Ledger)"]
-    Sys -->|"Discrepancy"| EM["Event Manager"]
-    EM --> DB["Store Alert in Memory"]
-    EM --> Webhook["(Optional) External Slack/Teams Hook"]
-    DB --> Dashboard["Aggregated on next UI poll"]
+    Sys["Agent-Trust Modules"] -->|Throws Exception| EM{"Event Interceptor"}
+    EM --> DB[("In-Memory SQLite")]
+    EM --> Hook["Enterprise Webhooks"]
+    DB --> UI["Dashboard API Fetch"]
 ```
 
-### 30. File Structure / Code Tree Overview
+### 30. Code Framework Distribution
 ```mermaid
 graph TD
-    Root["Agent-Trust Root"]
-    Root --> Core["agent_trust/ Backend"]
-    Core --> CoreAPI["api/"]
-    Core --> CoreMid["middleware/"]
-    Core --> CoreTrust["trust_graph/"]
-    Root --> FB["dashboard/ Frontend"]
+    Root{"Agent-Trust Root"}
+    
+    Root --> Core["agent_trust/ Python Library"]
+    Core --> CoreAPI["api/ FastAPI Core"]
+    Core --> CoreMid["middleware/ Core Overlays"]
+    Core --> CoreTrust["trust_graph/ DAG Engine"]
+    
+    Root --> FB["dashboard/ Vite/React SPA"]
     FB --> Src["src/"]
-    Src --> AppJ["App.jsx Live Engine"]
-    Src --> index["index.css Glassmorphism"]
+    Src --> AppJ["App.jsx Live Pollers"]
+    Src --> index["index.css Styling"]
 ```
 
 ---
