@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-trust"
+version = "0.1.0"
+description = "The Trust & Reputation Layer That A2A Forgot to Build"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    {name = "agent-trust contributors"}
+]
+keywords = ["a2a", "trust", "reputation", "security", "agents", "middleware"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Networking",
+]
+
+dependencies = [
+    "networkx>=3.2",
+    "redis>=5.0",
+    "cryptography>=41.0",
+    "PyNaCl>=1.5.0",
+    "PyJWT>=2.8.0",
+    "python-jose[cryptography]>=3.3.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "httpx>=0.26.0",
+    "aiosqlite>=0.19.0",
+    "rich>=13.7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/agent-trust/agent-trust"
+Documentation = "https://agent-trust.dev"
+Repository = "https://github.com/agent-trust/agent-trust"
+Issues = "https://github.com/agent-trust/agent-trust/issues"
+
+[tool.setuptools.packages.find]
+include = ["agent_trust*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
