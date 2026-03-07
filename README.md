@@ -82,10 +82,10 @@ stateDiagram-v2
 ```mermaid
 graph TD
     User["Human Authorized Request"] --> A1["Root Planner Agent"]
-    A1 -- "Delegates READ" --> A2["Research Agent"]
-    A2 -- "Delegates PARSE" --> A3["Parser Agent"]
-    A3 -- "Delegates LOG" --> A4["Audit Agent"]
-    subgraph Consent Audit Chain
+    A1 -->|"Delegates READ"| A2["Research Agent"]
+    A2 -->|"Delegates PARSE"| A3["Parser Agent"]
+    A3 -->|"Delegates LOG"| A4["Audit Agent"]
+    subgraph ConsentChain [Consent Audit Chain]
         A1
         A2
         A3
@@ -110,12 +110,15 @@ graph TD
 
 ### 7. Reputation Degradation (Penalty Curve)
 ```mermaid
-xychart-beta
-    title "Reputation Decay Over Violations"
-    x-axis [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    y-axis "Score" 0.0 --> 1.0
-    line [1.0, 0.98, 0.92, 0.81, 0.65, 0.44, 0.15, 0.02, 0.0, 0.0]
-    bar [0, 0, 1, 1, 2, 3, 5, 8, 10, 10]
+graph TD
+    Rep1["100% - Trusted"] --> Rep2["90% - First Violation"]
+    Rep2 --> Rep3["60% - Multiple Violations"]
+    Rep3 --> Rep4["15% - Consistent Failures"]
+    Rep4 --> Rep5["0% - Untrusted/Isolating"]
+    Violations["Policy Violations"] --> Rep2
+    Violations --> Rep3
+    Violations --> Rep4
+    Violations --> Rep5
 ```
 
 ### 8. Merkle Tree Reputation Validation
@@ -164,17 +167,17 @@ sequenceDiagram
 ### 11. Cross-Organization Boundary Mapping
 ```mermaid
 graph LR
-    subgraph Organization A (OrchestraCorp)
+    subgraph OrgA [Organization A OrchestraCorp]
         A1["Planner"]
         A2["Executor"]
     end
-    subgraph Organization B (DataVault)
+    subgraph OrgB [Organization B DataVault]
         B1["Retriever"]
         B2["Analyzer"]
     end
-    A1 -- "Cross-Org Trust (VERIFIED)" --> B1
-    A2 -- "Cross-Org Trust (BASIC)" --> B2
-    B1 -. "Refused Trust" .-> A2
+    A1 -->|"Cross-Org Trust (VERIFIED)"| B1
+    A2 -->|"Cross-Org Trust (BASIC)"| B2
+    B1 -.->|"Refused Trust"| A2
 ```
 
 ### 12. East-West Traffic Anomaly Detection
@@ -187,8 +190,8 @@ graph TD
     P --> ML["Heuristic Matcher"]
     L --> ML
     V --> ML
-    ML -- "Score > Limit" --> Alert["Trigger 'volume_spike'"]
-    ML -- "Score < Limit" --> Pass["Store in Event Log"]
+    ML -->|"Score > Limit"| Alert["Trigger 'volume_spike'"]
+    ML -->|"Score < Limit"| Pass["Store in Event Log"]
 ```
 
 ### 13. Security State Lifecycle
@@ -228,7 +231,7 @@ graph TD
     Weak --> Bad["Malicious Overlay Node"]
     Bad -.->|"Forge Delegation Token"| Weak
     Weak -.->|"Attempt Admin Execution on behalf of Good"| Target["Critical DB Node"]
-    Target -- "Denied by Agent-Trust (Scope Mismatch & Chain ID failure)" --> Weak
+    Target -->|"Denied by Agent-Trust (Scope Mismatch & Chain ID failure)"| Weak
 ```
 
 ### 16. Operational Metrics Calculation
@@ -237,7 +240,7 @@ graph TD
     Events["Interaction History DB"]
     Events --> Succ["Success Rate = Sum(Succ)/Total"]
     Events --> Lat["Avg Latency = Sum(Lat)/Total"]
-    Events --> Viol["Violation Rate = Sum(Viol)/(Total * Time Decay)"]
+    Events --> Viol["Violation Rate = Sum(Viol)/(Total * Decay)"]
     Succ --> Rep["Overall Reputation Formula"]
     Lat --> Rep
     Viol --> Rep
@@ -253,15 +256,16 @@ graph LR
     OS --> Docker
     Docker --> AT
     AT --> App
-    App -- "Attempts outbound A2A call" --> AT
-    AT -- "Authorizes / Blocks" --> Docker
+    App -->|"Attempts outbound A2A call"| AT
+    AT -->|"Authorizes / Blocks"| Docker
 ```
 
 ### 18. Centralized vs Decentralized Deployments
 ```mermaid
 graph TD
     SubGraph1["Decentralized (Sidecar Mode)"]
-    S1["Agent A (Sidecar)"] <--> S2["Agent B (Sidecar)"]
+    S1["Agent A (Sidecar)"] --> S2["Agent B (Sidecar)"]
+    S2 --> S1
     
     SubGraph2["Centralized (Gateway Mode)"]
     GA["Agent A"] --> GW{"Agent-Trust Gateway"}
@@ -284,18 +288,19 @@ sequenceDiagram
 
 ### 20. Token Consumption Timeline (Single-Use vs TTL)
 ```mermaid
-gantt
-    title JWT Validation Window
-    dateFormat  s
-    axisFormat %S
-    section TTL Based
-    Issue Token       :a1, 0, 50s
-    Token Valid       :active, a1, 300s
-    Token Expires     :crit, 300s, 305s
-    section Single Use
-    Issue Token       :a2, 0, 50s
-    Use 1 (Pass)      :done, a2, 75s
-    Use 2 (Fail)      :crit, 75s, 80s
+sequenceDiagram
+    participant T as Timeline
+    participant JWT as ScopedJWT
+    Note over T,JWT: Time-To-Live (TTL) Mechanism
+    T->>JWT: Issue Token (Time = 0s)
+    Note over JWT: Token is Valid (0s - 300s)
+    T->>JWT: 300s Elapsed
+    Note over JWT: Token Expired! (Strict TTL)
+    Note over T,JWT: Single-Use Guarantee
+    T->>JWT: Token Used for Execution
+    Note over JWT: Token Valid
+    T->>JWT: Execution Finished
+    Note over JWT: Token Permanently Invalidated
 ```
 
 ### 21. Live Traffic Dashboard Socket Flow
@@ -303,8 +308,8 @@ gantt
 graph LR
     EW["East-West Monitor"] --> Q["In-Memory Buffer Ring"]
     Q -.->|"Polling Sync"| API["/api/dashboard/traffic"]
-    API --> UI["React UI `trafficTimeline` State"]
-    UI --> Chart["Recharts `<AreaChart>`"]
+    API --> UI["React UI trafficTimeline State"]
+    UI --> Chart["Recharts AreaChart"]
 ```
 
 ### 22. React Component Hierarchy
@@ -335,10 +340,10 @@ graph TD
 ```mermaid
 graph LR
     Req["Request"] --> Check1{"Depth < Limit?"}
-    Check1 -- Yes --> Check2{"Token Includes Data Scope?"}
-    Check2 -- No --> Alert1["GDPR Warning"]
-    Check2 -- Yes --> OK["Compliance PASS"]
-    Check1 -- No --> Alert2["SOC2 Warning (Chain too long)"]
+    Check1 -->|Yes| Check2{"Token Includes Data Scope?"}
+    Check2 -->|No| Alert1["GDPR Warning"]
+    Check2 -->|Yes| OK["Compliance PASS"]
+    Check1 -->|No| Alert2["SOC2 Warning (Chain too long)"]
 ```
 
 ### 25. Storage Schema Overlook (Conceptual)
@@ -388,7 +393,7 @@ graph TD
     NodeB --> NodeC
     NodeC --> NodeA
     Algo["networkx.simple_cycles(G)"] --> Scan
-    Scan -- "Cycle Found" --> Warn["Log Alert"]
+    Scan -->|"Cycle Found"| Warn["Log Alert"]
     Warn --> Break["Temporarily Suspend Edge C->A"]
 ```
 
@@ -405,7 +410,7 @@ graph BT
 ```mermaid
 graph LR
     Sys["Sub-Module (Monitor, DAG, Ledger)"]
-    Sys -- "Discrepancy" --> EM["Event Manager"]
+    Sys -->|"Discrepancy"| EM["Event Manager"]
     EM --> DB["Store Alert in Memory"]
     EM --> Webhook["(Optional) External Slack/Teams Hook"]
     DB --> Dashboard["Aggregated on next UI poll"]
@@ -415,14 +420,14 @@ graph LR
 ```mermaid
 graph TD
     Root["Agent-Trust Root"]
-    Root --> Core["agent_trust/ (Backend)"]
+    Root --> Core["agent_trust/ Backend"]
     Core --> CoreAPI["api/"]
     Core --> CoreMid["middleware/"]
     Core --> CoreTrust["trust_graph/"]
-    Root --> FB["dashboard/ (Frontend)"]
+    Root --> FB["dashboard/ Frontend"]
     FB --> Src["src/"]
-    Src --> AppJ["App.jsx (Live Engine)"]
-    Src --> index["index.css (Glassmorphism)"]
+    Src --> AppJ["App.jsx Live Engine"]
+    Src --> index["index.css Glassmorphism"]
 ```
 
 ---
