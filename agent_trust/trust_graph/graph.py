@@ -27,6 +27,8 @@ from agent_trust.types import (
     TrustEdge,
     TrustLevel,
 )
+from agent_trust.utils.storage import SQLiteStorage
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -60,12 +62,17 @@ class TrustGraph:
             print(f"Chain: {' → '.join(chain)}")
     """
 
-    def __init__(self, config: Optional[TrustGraphConfig] = None):
+    def __init__(self, config: Optional[TrustGraphConfig] = None, storage: Optional[SQLiteStorage] = None):
         self._config = config or TrustGraphConfig()
+        self._storage = storage
         self._graph = nx.DiGraph()
         self._edges: dict[tuple[str, str], TrustEdge] = {}
         self._alerts: list[TrustAlert] = []
         self._revoked_edges: list[TrustEdge] = []
+        
+        # Load from storage if available
+        if self._storage is not None:
+            self._load_from_storage()
 
     @property
     def agent_count(self) -> int:
@@ -79,6 +86,22 @@ class TrustGraph:
     def alerts(self) -> list[TrustAlert]:
         return list(self._alerts)
 
+    def add_alert(self, alert: TrustAlert) -> None:
+        """Add a security alert to the graph and storage."""
+        self._alerts.append(alert)
+        if self._storage is not None:
+            self._storage.save_alert(alert)
+        logger.warning(f"Alert added: {alert.alert_type} - {alert.message}")
+
+    def get_graph_stats(self) -> dict:
+        """Get summary statistics for the trust graph."""
+        return {
+            "total_agents": self.agent_count,
+            "total_trust_edges": self.edge_count,
+            "total_alerts": len(self._alerts),
+            "revoked_edges": len(self._revoked_edges),
+        }
+
     def add_agent(
         self,
         identity: AgentIdentity,
@@ -91,6 +114,10 @@ class TrustGraph:
             trust_level=initial_trust,
             added_at=time.time(),
         )
+        storage = self._storage
+        if storage is not None:
+            storage.save_agent(identity)
+            
         logger.info(
             f"Added agent {identity.agent_id} to trust graph "
             f"(trust level: {initial_trust.name})"
@@ -162,6 +189,10 @@ class TrustGraph:
             edge=edge,
         )
         self._edges[(source_id, target_id)] = edge
+
+        storage = self._storage
+        if storage is not None:
+            storage.save_trust_edge(edge)
 
         logger.info(
             f"Trust edge: {source_id} → {target_id} "
@@ -293,7 +324,7 @@ class TrustGraph:
             source, target = chain[i], chain[i + 1]
             try:
                 self.remove_trust_edge(source, target)
-                revoked += 1
+                revoked = int(revoked) + 1
             except TrustRevocationError:
                 pass
         
@@ -383,6 +414,8 @@ class TrustGraph:
                         chain=path,
                     )
                     self._alerts.append(alert)
+                    if self._storage is not None:
+                        self._storage.save_alert(alert)
                     logger.critical(
                         f"CASCADING TRUST VIOLATION: "
                         f"{' → '.join(path)} "
@@ -398,3 +431,72 @@ class TrustGraph:
 
             except (nx.NetworkXError, nx.NodeNotFound):
                 continue
+
+    def _load_from_storage(self) -> None:
+        """Load agents, edges, and alerts from persistent storage on startup."""
+        storage = self._storage
+        if storage is None:
+            return
+            
+        # 1. Load Agents
+        agent_rows = storage.get_agents()
+        for row in agent_rows:
+            identity = AgentIdentity(
+                agent_id=row['agent_id'],
+                organization=row['organization'],
+                public_key=b"", # Rehydrated later or not needed for graph ops
+                system_prompt_hash=row['system_prompt_hash'],
+                tool_list_hash=row['tool_list_hash'],
+                created_at=row['created_at'],
+                metadata=json.loads(row['metadata']) if row['metadata'] else {}
+            )
+            # Add to graph without re-saving
+            self._graph.add_node(
+                identity.agent_id,
+                identity=identity,
+                trust_level=TrustLevel.BASIC, # Default for re-load
+                added_at=identity.created_at,
+            )
+            
+        # 2. Load Trust Edges
+        edge_rows = storage.get_trust_edges()
+        for row in edge_rows:
+            sid, tid = str(row['source_id']), str(row['target_id'])
+            if sid in self._graph and tid in self._graph:
+                edge = TrustEdge(
+                    source_id=sid,
+                    target_id=tid,
+                    trust_level=TrustLevel(int(row['trust_level'])),
+                    granted_scopes=[TokenScope(s) for s in json.loads(row['scopes'])],
+                    max_delegation_depth=int(row['max_depth']),
+                    created_at=float(row['created_at']),
+                    expires_at=float(row['expires_at']) if row['expires_at'] else None,
+                )
+                self._graph.add_edge(
+                    sid, tid,
+                    trust_level=edge.trust_level.value,
+                    scopes=[s.value for s in edge.granted_scopes],
+                    max_depth=edge.max_delegation_depth,
+                    edge=edge
+                )
+                self._edges[(sid, tid)] = edge
+                
+        # 3. Load Recent Alerts
+        alert_rows = storage.get_alerts(limit=100)
+        for row in alert_rows:
+            alert = TrustAlert(
+                alert_id=row['alert_id'],
+                severity=AlertSeverity(row['severity']),
+                alert_type=row['alert_type'],
+                message=row['message'],
+                source_agent_id=row['source_id'],
+                target_agent_id=row['target_id'],
+                timestamp=row['timestamp'],
+                metadata=json.loads(row['metadata']) if row['metadata'] else {}
+            )
+            self._alerts.append(alert)
+            
+        logger.info(
+            f"Loaded {len(agent_rows)} agents, {len(edge_rows)} edges, "
+            f"and {len(alert_rows)} alerts from persistent storage."
+        )

@@ -1,5 +1,10 @@
+
+
+---
+
 <div align="center">
-  <h1>🛡️ Agent-Trust</h1>
+  <img src="images/agenttrust.png" width="300" alt="Agent-Trust Logo">
+  <h1>Agent-Trust</h1>
   <p><b>The Trust & Reputation Layer That A2A Forgot to Build</b></p>
   <p><i>Authored by <b>Sandeep Kumar Sahoo (MrDecryptDecipher)</b></i></p>
 </div>

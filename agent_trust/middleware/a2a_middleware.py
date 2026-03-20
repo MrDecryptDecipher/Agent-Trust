@@ -19,12 +19,15 @@ from agent_trust.reputation_ledger import ReputationLedger, ReputationQuery
 from agent_trust.consent_audit import ConsentChainManager, ComplianceChecker
 from agent_trust.east_west_monitor import A2AInterceptor, TrafficAnalyzer, EventStore
 from agent_trust.scoped_token import ScopedTokenManager
+from agent_trust.utils.storage import SQLiteStorage
 from agent_trust.types import (
     AgentIdentity,
     ComplianceStandard,
     InteractionRecord,
     TokenScope,
     TrustLevel,
+    TrustAlert,
+    AlertSeverity,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,9 +98,12 @@ class AgentTrustMiddleware:
         self._config = config or TrustConfig()
         self._signing_key = uuid.uuid4().hex
         
+        # Initialize Storage
+        self.storage = SQLiteStorage(self._config.sqlite_db_path)
+        
         # Initialize all modules
         self.agent_id = AgentIDManager(self._config.agent_id)
-        self.trust_graph = TrustGraph(self._config.trust_graph)
+        self.trust_graph = TrustGraph(self._config.trust_graph, storage=self.storage)
         self.alert_manager = AlertManager(self._config.trust_graph)
         self.scoped_token = ScopedTokenManager(
             self._config.scoped_token, self._signing_key
@@ -105,7 +111,7 @@ class AgentTrustMiddleware:
         self.consent_audit = ConsentChainManager(
             self._signing_key, self._config.consent_audit
         )
-        self.reputation = ReputationLedger(self._config.reputation)
+        self.reputation = ReputationLedger(self._config.reputation, storage=self.storage)
         self.reputation_query = ReputationQuery(self.reputation)
         self.interceptor = A2AInterceptor(
             self._config.east_west_monitor,
@@ -334,6 +340,18 @@ class AgentTrustMiddleware:
             metadata=metadata or {},
         )
         
+        # Trigger immediate alert if policy violations are present
+        if policy_violations > 0:
+            alert = TrustAlert(
+                severity=AlertSeverity.CRITICAL,
+                alert_type="policy_violation",
+                message=f"Security violation detected: {task_type} (Source: {source_id})",
+                source_agent_id=source_id,
+                target_agent_id=target_id,
+                metadata={"interaction_id": record.interaction_id}
+            )
+            self.trust_graph.add_alert(alert)
+        
         # Add to reputation ledger
         index = self.reputation.record_interaction(record)
         
@@ -432,9 +450,9 @@ class AgentTrustMiddleware:
                 {
                     "id": a.alert_id,
                     "severity": a.severity.value,
-                    "type": a.alert_type,
                     "message": a.message,
                     "timestamp": a.timestamp,
+                    "acknowledged": a.metadata.get("acknowledged", False),
                 }
                 for a in self.trust_graph.alerts[-50:]
             ],

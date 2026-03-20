@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+import json
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -16,6 +17,7 @@ from agent_trust.config import ReputationConfig
 from agent_trust.exceptions import InsufficientHistoryError, MerkleIntegrityError
 from agent_trust.reputation_ledger.merkle import MerkleTree
 from agent_trust.types import InteractionRecord
+from agent_trust.utils.storage import SQLiteStorage
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +37,12 @@ class ReputationScore:
     def to_dict(self) -> dict:
         return {
             "agent_id": self.agent_id,
-            "overall_score": round(self.overall_score, 4),
-            "reliability": round(self.reliability, 4),
-            "performance": round(self.performance, 4),
-            "compliance": round(self.compliance, 4),
+            "overall_score": round(float(self.overall_score), 4),
+            "reliability": round(float(self.reliability), 4),
+            "performance": round(float(self.performance), 4),
+            "compliance": round(float(self.compliance), 4),
             "total_interactions": self.total_interactions,
-            "confidence": round(self.confidence, 4),
+            "confidence": round(float(self.confidence), 4),
             "last_updated_iso": time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ",
                 time.gmtime(self.last_updated),
@@ -71,12 +73,17 @@ class ReputationLedger:
         print(f"Reputation: {score.overall_score}")
     """
 
-    def __init__(self, config: Optional[ReputationConfig] = None):
+    def __init__(self, config: Optional[ReputationConfig] = None, storage: Optional[SQLiteStorage] = None):
         self._config = config or ReputationConfig()
+        self._storage = storage
         self._merkle = MerkleTree(self._config.merkle_hash_algorithm)
         self._records: list[InteractionRecord] = []
         self._by_agent: dict[str, list[InteractionRecord]] = defaultdict(list)
         self._scores_cache: dict[str, ReputationScore] = {}
+        
+        # Load from storage if available
+        if self._storage:
+            self._load_from_storage()
 
     @property
     def merkle_root(self) -> str:
@@ -111,8 +118,11 @@ class ReputationLedger:
         }
         index = self._merkle.add_leaf(leaf_data)
         
-        # Store record
+        # Store record and persist
         self._records.append(record)
+        storage = self._storage
+        if storage is not None:
+            storage.save_interaction(record)
         
         # Index by both agents
         self._by_agent[record.source_agent_id].append(record)
@@ -171,6 +181,15 @@ class ReputationLedger:
         """Get a Merkle proof for a specific record."""
         return self._merkle.get_proof(record_index)
 
+    def get_stats(self) -> dict:
+        """Get reputation ledger statistics for the dashboard."""
+        return {
+            "total_interactions": self.total_records,
+            "integrity_valid": self.verify_integrity(),
+            "merkle_root": self.merkle_root,
+            "unique_agents": len(self._by_agent),
+        }
+
     def verify_record(
         self,
         record_index: int,
@@ -192,8 +211,8 @@ class ReputationLedger:
         limit: int = 100,
     ) -> list[InteractionRecord]:
         """Get interaction history for an agent."""
-        records = self._by_agent.get(agent_id, [])
-        return records[-limit:]
+        history: list[InteractionRecord] = self._by_agent.get(agent_id, [])
+        return history[-limit:]
 
     def get_leaderboard(
         self,
@@ -203,7 +222,7 @@ class ReputationLedger:
         """Get top-N agents by reputation score."""
         min_int = min_interactions or self._config.min_interactions_for_score
         
-        scores = []
+        scores: list[ReputationScore] = []
         for agent_id in self._by_agent:
             if len(self._by_agent[agent_id]) >= min_int:
                 try:
@@ -241,16 +260,46 @@ class ReputationLedger:
             for r in records
         ]
 
-    def get_stats(self) -> dict:
-        """Get ledger statistics."""
-        return {
-            "total_records": len(self._records),
-            "unique_agents": len(self._by_agent),
-            "merkle_root": self._merkle.root_hash,
-            "merkle_leaves": self._merkle.size,
-            "integrity_valid": self.verify_integrity(),
-            "cached_scores": len(self._scores_cache),
-        }
+    def _load_from_storage(self):
+        """Load interaction records from persistent storage on startup."""
+        storage = self._storage
+        if storage is None:
+            return
+            
+        rows = storage.get_interactions(limit=10000)
+        # Sort by timestamp to rebuild Merkle tree in correct order
+        rows.sort(key=lambda x: x['timestamp'])
+        
+        for row in rows:
+            record = InteractionRecord(
+                interaction_id=row['interaction_id'],
+                source_agent_id=row['source_id'],
+                target_agent_id=row['target_id'],
+                task_type=row['task_type'],
+                success=bool(row['success']),
+                latency_ms=row['latency_ms'],
+                policy_violations=row['policy_violations'],
+                started_at=row['timestamp'],
+                metadata=json.loads(row['metadata']) if row['metadata'] else {}
+            )
+            
+            # Rebuild in-memory state
+            leaf_data = {
+                "interaction_id": record.interaction_id,
+                "source": record.source_agent_id,
+                "target": record.target_agent_id,
+                "task_type": record.task_type,
+                "success": record.success,
+                "latency_ms": record.latency_ms,
+                "policy_violations": record.policy_violations,
+                "timestamp": record.started_at,
+            }
+            self._merkle.add_leaf(leaf_data)
+            self._records.append(record)
+            self._by_agent[record.source_agent_id].append(record)
+            self._by_agent[record.target_agent_id].append(record)
+            
+        logger.info(f"Loaded {len(self._records)} interactions from persistent storage.")
 
     def _compute_score(
         self,
@@ -290,7 +339,7 @@ class ReputationLedger:
 
         # Compliance: inverse of violation rate
         total_violations = sum(r.policy_violations for r, _ in weighted_records)
-        compliance = max(0, 1.0 - (total_violations / max(len(records), 1)))
+        compliance = max(0.0, 1.0 - (total_violations / max(len(records), 1)))
 
         # Overall score: weighted combination
         overall = (

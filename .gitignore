@@ -75,3 +75,32 @@ agent_trust.db
 data/
 storage/
 temp/
+.agent-trust/
+
+# Debug / scratch files
+debug_*.json
+check_db.py
+git_status.txt
+server_error*.log
+
+# PDF generation scripts (not part of core project)
+generate_*.js
+print-*.js
+debug_*.js
+fix_pdf_metadata.js
+_pdf_tmp_gen/
+_tmp_presentation/
+presentation/
+surge_deploy/
+*.bak
+test_slide_*.png
+swipe.pdf
+test-zoom.pdf
+
+# Large binary artifacts
+*.pdf
+images/b64_output.txt
+images/pic_b64.txt
+images/*.jfif
+logo.png
+staged_files.txt

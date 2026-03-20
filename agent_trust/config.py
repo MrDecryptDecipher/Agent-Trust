@@ -111,4 +111,5 @@ class TrustConfig:
     # Global settings
     log_level: str = "INFO"
     data_dir: str = ".agent-trust"
+    sqlite_db_path: str = ".agent-trust/trust_vault.db"
     enable_all_modules: bool = True
